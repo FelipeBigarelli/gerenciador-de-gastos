@@ -744,6 +744,62 @@ tbody td {
 }
 
 /* =====================================================
+   PAY INVOICE DIALOG
+   ===================================================== */
+.pay-dialog {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 0;
+  background: var(--bg2);
+  color: var(--text);
+  max-width: 440px;
+  width: calc(100% - 32px);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+.pay-dialog::backdrop {
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(2px);
+}
+.pay-dialog-body { padding: 22px 22px 18px; }
+.pay-dialog-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 4px;
+  color: var(--text);
+}
+.pay-dialog-subtitle {
+  font-size: 12px;
+  color: var(--text3);
+  margin-bottom: 16px;
+}
+.pay-dialog-info {
+  background: var(--bg3);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+.pay-dialog-info div { display: flex; justify-content: space-between; padding: 2px 0; }
+.pay-dialog-info strong { color: var(--text); font-weight: 700; }
+.pay-quick-btns {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+.pay-quick-btn {
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  color: var(--text2);
+  font-size: 11px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.pay-quick-btn:hover { background: var(--bg4); color: var(--text); border-color: var(--accent); }
+
+/* =====================================================
    SCROLLBAR
    ===================================================== */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -1139,6 +1195,52 @@ tbody td {
   </div>
 
 </main>
+
+<!-- =====================================================
+     PAY INVOICE DIALOG
+     ===================================================== -->
+<dialog id="payInvoiceDialog" class="pay-dialog">
+  <div class="pay-dialog-body">
+    <div class="pay-dialog-title">💵 Pagar Fatura</div>
+    <div class="pay-dialog-subtitle">Quanto você quer pagar da sua fatura aberta?</div>
+
+    <div class="pay-dialog-info">
+      <div><span>Cartão</span><strong id="payInvCard">—</strong></div>
+      <div><span>Período</span><strong id="payInvPeriod">—</strong></div>
+      <div><span>Valor atual</span><strong id="payInvCurrent">—</strong></div>
+    </div>
+
+    <div class="form-grid" style="margin-bottom:14px;">
+      <div class="form-group" style="grid-column: span 2;">
+        <label>Valor a pagar (R$) *</label>
+        <input type="number" id="payInvAmount" placeholder="0,00" min="0.01" step="0.01" />
+        <div class="pay-quick-btns">
+          <button type="button" class="pay-quick-btn" data-pay-quick="full">Total</button>
+          <button type="button" class="pay-quick-btn" data-pay-quick="half">Metade</button>
+          <button type="button" class="pay-quick-btn" data-pay-quick="min">Mínimo (15%)</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Forma de Pagamento</label>
+        <select id="payInvMethod">
+          <option value="Pix">Pix</option>
+          <option value="Débito">Débito</option>
+          <option value="Transferência">Transferência</option>
+          <option value="Dinheiro">Dinheiro</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Data</label>
+        <input type="date" id="payInvDate" />
+      </div>
+    </div>
+
+    <div class="form-actions">
+      <button type="button" class="btn btn-accent" id="payInvConfirm">💾 Confirmar Pagamento</button>
+      <button type="button" class="btn" id="payInvCancel">Cancelar</button>
+    </div>
+  </div>
+</dialog>
 
 <!-- =====================================================
      JAVASCRIPT
@@ -1977,6 +2079,9 @@ function renderInvoices() {
         <td style="color:var(--text3);font-size:12px;">${formatDateTime(i.createdAt)}</td>
         <td>
           <div class="td-actions">
+            ${(i.status === 'open' || i.status === 'closed') && parseAmount(i.amount) > 0
+              ? `<button class="btn btn-sm" title="Pagar fatura" onclick="openPayInvoice('${i.id}')">💵</button>`
+              : ''}
             <button class="btn btn-sm" onclick="editInvoice('${i.id}')">✏️</button>
             <button class="btn btn-sm btn-danger" onclick="deleteInvoice('${i.id}')">🗑</button>
           </div>
@@ -2249,6 +2354,75 @@ function deleteInvoice(id) {
 }
 
 /* =====================================================
+   PAY INVOICE (pagamento parcial / total da fatura)
+   ===================================================== */
+let payingInvoiceId = null;
+
+function openPayInvoice(id) {
+  const inv = state.invoices.find(x => x.id === id);
+  if (!inv) return;
+  payingInvoiceId = id;
+  const mName = MONTHS[(parseInt(inv.invoiceMonth) || 1) - 1] || '-';
+  document.getElementById('payInvCard').textContent = inv.cardName || '—';
+  document.getElementById('payInvPeriod').textContent = `${mName} / ${inv.invoiceYear}`;
+  document.getElementById('payInvCurrent').textContent = formatCurrency(parseAmount(inv.amount));
+  document.getElementById('payInvAmount').value = '';
+  document.getElementById('payInvAmount').max = parseAmount(inv.amount);
+  document.getElementById('payInvMethod').value = 'Pix';
+  document.getElementById('payInvDate').value = new Date().toISOString().split('T')[0];
+  document.getElementById('payInvoiceDialog').showModal();
+  setTimeout(() => document.getElementById('payInvAmount').focus(), 50);
+}
+
+function closePayInvoice() {
+  document.getElementById('payInvoiceDialog').close();
+  payingInvoiceId = null;
+}
+
+function confirmPayInvoice() {
+  if (!payingInvoiceId) return;
+  const inv = state.invoices.find(x => x.id === payingInvoiceId);
+  if (!inv) { closePayInvoice(); return; }
+
+  const payAmount = parseAmount(document.getElementById('payInvAmount').value);
+  const method = document.getElementById('payInvMethod').value;
+  const date = document.getElementById('payInvDate').value;
+  const currentAmount = parseAmount(inv.amount);
+
+  if (!payAmount || payAmount <= 0) { alert('Informe um valor válido maior que zero.'); return; }
+  if (payAmount > currentAmount + 0.001) {
+    if (!confirm(`O valor (${formatCurrency(payAmount)}) é maior que a fatura atual (${formatCurrency(currentAmount)}). Continuar mesmo assim?`)) return;
+  }
+  if (!date) { alert('Informe a data do pagamento.'); return; }
+
+  const mName = MONTHS[(parseInt(inv.invoiceMonth) || 1) - 1] || '';
+  const remaining = Math.max(0, currentAmount - payAmount);
+  const isFull = remaining < 0.005;
+
+  // 1) Criar transação de saída representando o pagamento
+  state.transactions.push({
+    id: generateId(),
+    title: `Pagamento ${isFull ? 'total' : 'parcial'} fatura ${inv.cardName} ${mName}/${inv.invoiceYear}`,
+    type: 'outcome',
+    amount: payAmount,
+    category: 'Outros',
+    paymentMethod: method,
+    date,
+    notes: `Pagamento referente à fatura ${inv.cardName} ${mName}/${inv.invoiceYear}.`,
+    createdAt: new Date().toISOString()
+  });
+
+  // 2) Reduzir o valor da fatura. Se quitada, marcar como 'paid'.
+  inv.amount = remaining;
+  if (isFull) inv.status = 'paid';
+  inv.updatedAt = new Date().toISOString();
+
+  saveState();
+  closePayInvoice();
+  renderAll();
+}
+
+/* =====================================================
    BACKUP: EXPORT / IMPORT
    ===================================================== */
 function exportBackup() {
@@ -2350,6 +2524,24 @@ function initEventListeners() {
   document.getElementById('filterTPeriod').addEventListener('change', renderTransactions);
   document.getElementById('sortT').addEventListener('change', renderTransactions);
   document.getElementById('searchT').addEventListener('input', renderTransactions);
+
+  // Pay invoice dialog
+  document.getElementById('payInvConfirm').addEventListener('click', confirmPayInvoice);
+  document.getElementById('payInvCancel').addEventListener('click', closePayInvoice);
+  document.getElementById('payInvoiceDialog').addEventListener('close', () => { payingInvoiceId = null; });
+  document.querySelectorAll('.pay-quick-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const inv = state.invoices.find(x => x.id === payingInvoiceId);
+      if (!inv) return;
+      const current = parseAmount(inv.amount);
+      const mode = btn.dataset.payQuick;
+      let val = 0;
+      if (mode === 'full') val = current;
+      else if (mode === 'half') val = current / 2;
+      else if (mode === 'min') val = current * 0.15;
+      document.getElementById('payInvAmount').value = val.toFixed(2);
+    });
+  });
 }
 
 /* =====================================================
