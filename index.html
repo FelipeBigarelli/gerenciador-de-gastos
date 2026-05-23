@@ -835,6 +835,9 @@ tbody td {
      ===================================================== -->
 <main class="main-content">
 
+  <!-- AUTO-BILLING NOTICE -->
+  <div id="autoBillingNotice" style="display:none;margin-bottom:14px;"></div>
+
   <!-- FILTER BAR -->
   <div class="filter-bar">
     <div class="filter-group">
@@ -1077,10 +1080,17 @@ tbody td {
       </div>
     </div>
 
+    <div class="notice" style="background:rgba(0,229,176,0.08);border-color:rgba(0,229,176,0.25);color:var(--income-color);">
+      🤖 <strong>Lançamento automático:</strong> Toda vez que você abre o app, as assinaturas <strong>ativas</strong> cujo dia de cobrança já chegou são lançadas automaticamente como transações de gasto, no método de pagamento configurado. Cada mês só é processado uma vez (sem duplicidade).
+    </div>
+
     <!-- TABLE -->
     <div class="section-header">
       <span class="section-title">Assinaturas</span>
-      <span id="subCount" style="font-size:12px;color:var(--text3)"></span>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <button class="btn btn-sm" id="runAutoBillingBtn" title="Verificar e lançar assinaturas vencidas agora">🤖 Lançar pendentes</button>
+        <span id="subCount" style="font-size:12px;color:var(--text3)"></span>
+      </div>
     </div>
     <div class="table-wrap">
       <table>
@@ -2354,6 +2364,96 @@ function deleteInvoice(id) {
 }
 
 /* =====================================================
+   SUBSCRIPTION AUTO-BILLING
+   Cria automaticamente uma transação para cada assinatura ativa
+   cujo dia de cobrança já chegou no mês atual (e meses anteriores
+   desde a criação da assinatura), evitando duplicidade via
+   sub.processedBillings = ['YYYY-MM', ...].
+   ===================================================== */
+function processSubscriptionAutoBilling() {
+  const today = new Date();
+  const todayKey = today.getFullYear() * 12 + today.getMonth();
+  const created = [];
+  let changed = false;
+
+  (state.subscriptions || []).forEach(sub => {
+    if (sub.status !== 'active') return;
+    if (!Array.isArray(sub.processedBillings)) sub.processedBillings = [];
+
+    const billingDay = Math.max(1, Math.min(31, parseInt(sub.billingDay) || 1));
+    const subCreated = sub.createdAt ? new Date(sub.createdAt) : today;
+    const subCreatedDate = new Date(subCreated.getFullYear(), subCreated.getMonth(), subCreated.getDate());
+    const startKey = subCreated.getFullYear() * 12 + subCreated.getMonth();
+
+    for (let key = startKey; key <= todayKey; key++) {
+      const y = Math.floor(key / 12);
+      const m = (key % 12) + 1; // 1-12
+      const ymKey = `${y}-${String(m).padStart(2, '0')}`;
+
+      if (sub.processedBillings.includes(ymKey)) continue;
+
+      const lastDay = new Date(y, m, 0).getDate();
+      const effectiveDay = Math.min(billingDay, lastDay);
+      const billingDate = new Date(y, m - 1, effectiveDay);
+
+      // Não cobrar antes da criação da assinatura
+      if (billingDate < subCreatedDate) {
+        sub.processedBillings.push(ymKey);
+        changed = true;
+        continue;
+      }
+      // Não cobrar no futuro
+      if (billingDate > today) continue;
+
+      const dateStr = `${y}-${String(m).padStart(2, '0')}-${String(effectiveDay).padStart(2, '0')}`;
+      state.transactions.push({
+        id: generateId(),
+        title: `${sub.name} — ${MONTHS[m - 1]}/${y}`,
+        type: 'outcome',
+        amount: parseAmount(sub.amount),
+        category: sub.category || 'Outros',
+        paymentMethod: sub.paymentMethod || 'Pix',
+        date: dateStr,
+        notes: `Lançamento automático da assinatura "${sub.name}".`,
+        createdAt: new Date().toISOString(),
+        autoSubId: sub.id
+      });
+      sub.processedBillings.push(ymKey);
+      created.push(`${sub.name} — ${MONTHS[m - 1]}/${y} (${formatCurrency(parseAmount(sub.amount))})`);
+      changed = true;
+    }
+  });
+
+  if (changed) saveState();
+  return created;
+}
+
+function showAutoBillingNotice(items) {
+  const el = document.getElementById('autoBillingNotice');
+  if (!el) return;
+  el.innerHTML = `
+    <div class="notice" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+      <div style="flex:1;">
+        🤖 <strong>Assinaturas lançadas automaticamente:</strong>
+        <div style="margin-top:6px;">${items.map(i => `• ${escapeHtml(i)}`).join('<br>')}</div>
+      </div>
+      <button class="btn btn-sm" onclick="document.getElementById('autoBillingNotice').style.display='none'">✕</button>
+    </div>
+  `;
+  el.style.display = '';
+}
+
+function runAutoBillingManually() {
+  const created = processSubscriptionAutoBilling();
+  if (created.length === 0) {
+    alert('Nenhuma assinatura nova para lançar — todas já foram processadas para este mês.');
+  } else {
+    showAutoBillingNotice(created);
+    renderAll();
+  }
+}
+
+/* =====================================================
    PAY INVOICE (pagamento parcial / total da fatura)
    ===================================================== */
 let payingInvoiceId = null;
@@ -2525,6 +2625,10 @@ function initEventListeners() {
   document.getElementById('sortT').addEventListener('change', renderTransactions);
   document.getElementById('searchT').addEventListener('input', renderTransactions);
 
+  // Manual auto-billing trigger
+  const runBtn = document.getElementById('runAutoBillingBtn');
+  if (runBtn) runBtn.addEventListener('click', runAutoBillingManually);
+
   // Pay invoice dialog
   document.getElementById('payInvConfirm').addEventListener('click', confirmPayInvoice);
   document.getElementById('payInvCancel').addEventListener('click', closePayInvoice);
@@ -2554,6 +2658,10 @@ function init() {
   initEventListeners();
   setTheme(state.theme);
   seedIfNeeded();
+
+  // Lançamento automático das assinaturas vencidas até hoje
+  const autoBilled = processSubscriptionAutoBilling();
+  if (autoBilled.length > 0) showAutoBillingNotice(autoBilled);
 
   // Set default date for transaction form
   document.getElementById('tDate').value = new Date().toISOString().split('T')[0];
